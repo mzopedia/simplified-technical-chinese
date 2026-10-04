@@ -1,5 +1,7 @@
 # 简明技术中文
 
+[![tests](https://github.com/mzopedia/simplified-technical-chinese/actions/workflows/test.yml/badge.svg)](https://github.com/mzopedia/simplified-technical-chinese/actions/workflows/test.yml) [English](README.en.md)
+
 Simplified Technical Chinese（STC）。一套受控的中文写法，用于技术说明、操作步骤、接口文档和 AI 的解释性回答。目标是读者读一遍就不会读错。
 
 它借鉴 [ASD-STE100](https://www.asd-ste100.org/)（Simplified Technical English）的方法：限制用词，限制句式，一句一事。它不是 ASD-STE100 的译本，与 ASD 没有关系。
@@ -149,7 +151,7 @@ python3 tools/check.py 文件.md [更多文件]
 
 ## 状态
 
-草案 0.1。规范、词表说明、本文件和 SKILL.md 自身都通过了检查脚本（0 条【必须】）。
+草案 0.1。规范、本文件和 SKILL.md 自身都通过了检查脚本（0 条【必须】），CI 每次提交都会复查。
 
 已知问题：
 
