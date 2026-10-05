@@ -106,7 +106,9 @@ class TestVocab(unittest.TestCase):
         f = self.checker.check_text("按新打法对标行业方案，把握用户痛点，理清底层逻辑。")
         hits = [x for x in f if x.rule == "1.7"]
         self.assertEqual(len(hits), 4)
-        self.assertTrue(all(x.level == check.MUST for x in hits))
+        # 痛点常有正当用法，降为建议；其余是必须
+        self.assertEqual(sum(x.level == check.MUST for x in hits), 3)
+        self.assertEqual(sum(x.level == check.SHOULD for x in hits), 1)
 
     def test_words_with_technical_meaning_are_not_banned(self):
         # 势能、飞轮、护城河 标为不自动检查；脚手架、收敛 只在词表第三部分限定意义
@@ -123,6 +125,31 @@ class TestVocab(unittest.TestCase):
         self.assertIn("4.1", rules(f))
         f = self.checker.check_text("服务读取配置，然后连接数据库。")
         self.assertNotIn("4.1", rules(f))
+
+    def test_substring_matches_are_not_banned_words(self):
+        for text in ["可以传入参数，生成对应的值。", "坐标位置不准确。", "添加以下参数。", "我们不得不为此调整。",
+                     "为其实施写保护。", "你不一定要从零开始。", "节点选择完全受控。", "针对标识符的定义。", "一千万行数据。"]:
+            f = [x for x in self.checker.check_text(text) if x.rule in ("1.1", "1.3", "1.4", "1.7")]
+            self.assertEqual(f, [], text)
+
+    def test_degree_and_estimate_words_only_in_operations(self):
+        self.assertNotIn("1.5", rules(self.checker.check_text("Rust 提供了很多类型。大部分用户不用 beta 版。")))
+        self.assertIn("1.5", rules(self.checker.check_text("1. 等待很长时间。")))
+        self.assertNotIn("5.4", rules(self.checker.check_text("这会有大约 16 KB 的基本打包大小。")))
+        self.assertIn("5.4", rules(self.checker.check_text("1. 重试多次。")))
+        self.assertIn("5.4", rules(self.checker.check_text("| 超时 | 大约 30 秒 |")))
+
+    def test_modal_words_only_in_operations(self):
+        self.assertNotIn("2.3", rules(self.checker.check_text("输出结果应该是这样。")))
+        self.assertIn("2.3", rules(self.checker.check_text("1. 你应该先备份。")))
+
+    def test_open_list_with_example_marker_is_allowed(self):
+        self.assertNotIn("3.5", rules(self.checker.check_text("例如 Deployment、Service 等对象。")))
+        self.assertIn("3.5", rules(self.checker.check_text("支持 MySQL、PostgreSQL 等数据库。")))
+
+    def test_qingkuang_only_after_de(self):
+        self.assertNotIn("1.3", rules(self.checker.check_text("默认情况下，服务监听 8080 端口。")))
+        self.assertIn("1.3", rules(self.checker.check_text("出现错误的情况下重试。")))
 
 
 class TestSentenceRules(unittest.TestCase):
@@ -158,16 +185,19 @@ class TestSentenceRules(unittest.TestCase):
         self.assertNotIn("2.9", rules(f))
 
     def test_condition_after_action(self):
-        f = self.checker.check_text("重启服务（如果修改了端口号）。")
-        self.assertIn("2.5", rules(f))
+        f = self.checker.check_text("1. 重启服务，如果修改了端口号。")
+        self.assertTrue(any(x.rule == "2.5" and x.level == check.MUST for x in f))
+        # 括号里的内容多是补充说明，校准后不再当条件
+        self.assertNotIn("2.5", rules(self.checker.check_text("重启服务（如果修改了端口号）。")))
 
     def test_passive_in_operation_is_must(self):
         f = self.checker.check_text("1. 配置文件会被服务读取。")
         self.assertTrue(any(x.rule == "2.4" and x.level == check.MUST for x in f))
 
-    def test_passive_in_description_is_should(self):
-        f = self.checker.check_text("配置文件会被服务读取。")
-        self.assertTrue(any(x.rule == "2.4" and x.level == check.SHOULD for x in f))
+    def test_passive_in_description_is_not_checked(self):
+        # 描述句里的被动多是执行者未知或不重要的合规用法，脚本分不出来，校准后只查操作句
+        f = self.checker.check_text("配置文件会被服务读取。此选项已被弃用。")
+        self.assertNotIn("2.4", rules(f))
 
     def test_passive_markers_inside_other_words_are_not_passive(self):
         # 来自 answer-me-with-html 维护者在 1000 篇中文文档上的实测误报。
@@ -185,8 +215,10 @@ class TestSentenceRules(unittest.TestCase):
         self.assertIn("5.5", rules(f))
 
     def test_relative_time(self):
-        f = self.checker.check_text("旧接口近期下线。")
+        f = self.checker.check_text("旧接口下周下线。")
         self.assertIn("5.3", rules(f))
+        # 「稍后」「近期」在技术描述里多指程序时序，不是相对于写作时间的日期
+        self.assertNotIn("5.3", rules(self.checker.check_text("保存当前值，以便稍后恢复。查看近期事件。")))
 
     def test_chinese_numeral(self):
         f = self.checker.check_text("等待三秒。")
@@ -201,18 +233,27 @@ class TestSentenceRules(unittest.TestCase):
         f = self.checker.check_text("首先停止服务，然后备份数据，最后运行脚本。")
         self.assertIn("3.3", rules(f))
 
-    def test_warning_inside_step(self):
-        f = self.checker.check_text("1. 运行清理脚本。注意脚本会删除日志。")
-        self.assertIn("4.3", rules(f))
+    def test_numerals(self):
+        # 「一次」「两次」「一行」是量词习惯用法；三以上和两位数才查
+        self.assertNotIn("5.1", rules(self.checker.check_text("只执行一次。这一行会报错。重试两次。")))
+        self.assertIn("5.1", rules(self.checker.check_text("等待三秒。")))
+        self.assertIn("5.1", rules(self.checker.check_text("保留二十行。")))
 
     def test_code_block_skipped(self):
         text = "```\n请进行安装，然后等等等。\n```\n"
         f = self.checker.check_text(text)
         self.assertEqual(f, [])
 
-    def test_acronym_consistency(self):
-        f = self.checker.check_text("配置 CDN。cdn 会缓存文件。")
-        self.assertIn("1.6", rules(f))
+    def test_hard_wrapped_lines_form_one_sentence(self):
+        # Markdown 里的硬换行不是句子边界：两行拼成一句 46 字，报一次 2.1，行号是句子开始的那行
+        text = "第一句。这是一个被硬换行切开的很长的描述句，前半段写在这一行的末尾，\n后半段写在下一行，加起来超过四十个字。"
+        f = [x for x in self.checker.check_text(text) if x.rule == "2.1"]
+        self.assertEqual([(x.line, x.message[:8]) for x in f], [(1, "描述句 45 字")])
+
+    def test_unpunctuated_lines_are_not_sentences(self):
+        text = "\n".join(["基本"] * 8 + ["这些是组件示例的名字。"])
+        self.assertNotIn("3.2", rules(self.checker.check_text(text)))
+        self.assertNotIn("3.2", rules(self.checker.check_text("<code src=\"./demo/basic.tsx\">基本</code>\n" * 8)))
 
 
 class TestExamples(unittest.TestCase):

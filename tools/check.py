@@ -15,6 +15,7 @@
 """
 
 import argparse
+import bisect
 import json
 import os
 import re
@@ -36,6 +37,10 @@ SENTENCE_SPLIT = re.compile(r"(?<=[。！？])(?![」』”’）)])")
 
 # 系统行为句的常见主语。编号步骤里以这些词开头的句子不按操作句检查（规则 4.4）。
 SYSTEM_SUBJECTS = ("系统", "服务", "接口", "程序", "页面", "浏览器", "终端", "客户端", "服务端", "命令", "脚本")
+# 编号列表项里以这些词开头的句子是说明，不是操作：指代、举例、原因、定义。校准发现编号列表常用来列举说明。
+# 条件词（如果、当、在……之后）开头的句子仍算操作句：规则 2.5 要求条件写在动作前面。
+NON_OPERATION_STARTS = ("对于", "由于", "因为", "例如", "比如", "这", "该", "此", "其", "它", "我们",
+                        "注意", "说明", "即", "也就是", "每", "所有", "任何")
 
 
 @dataclass
@@ -68,7 +73,7 @@ class Unit:
 
 # 依赖语境的词用这里的正则替代简单匹配。键是词表中的词。
 PATTERNS: Dict[str, str] = {
-    "进行": r"进行(?!中|时|曲|到底)",
+    "进行": r"进行(?!中|时|曲|到底|了?\s*[A-Za-z])",
     "相关": r"相关(?!性|系数|联)",
     "等": r"(?:、[^、，。；：\n]{1,16}|(?:和|及|以及)[^，。；\n]{1,16})等(?:等)?(?!待|候|级|于|同|价|号|式|效|比|分|距|量|温|高|长|边|到|着)",
     "以上": r"\d\s*(?:个|次|秒|天|分钟|小时|倍|字|条|项|人|行|位|%|MB|GB|KB|TB|ms)?\s*以上",
@@ -83,7 +88,7 @@ PATTERNS: Dict[str, str] = {
     "十分": r"十分(?!钟)",
     "千万": r"千万(?!级|个|条|元|人|次|行|亿)",
     "最好": r"最好(?!的)",
-    "请": r"(?<![申邀聘宴])请(?!求|假|教|示|柬|帖)",
+    "请": r"(?<![申邀聘宴])请(?!求|假|教|示|柬|帖|见|参阅|参考|参见)",
     "展示": r"展示(?!层)",
     "需要": r"^需要(?!不)",
     "需": r"^需(?!要|求|不)",
@@ -95,6 +100,37 @@ PATTERNS: Dict[str, str] = {
     "开启": r"开启",
     "去除": r"去除(?!噪|重)",
     "选取": r"选取(?!区域|范围)",
+    # 下面这些是校准时发现的跨词误匹配：禁用词恰好是别的词的一部分
+    "入参": r"(?<![传输写导])入参(?!数|考)",
+    "出参": r"(?<![取给输导])出参(?!数|考|加|与|赛|观|展)",
+    "不准": r"不准(?!确|备)",
+    "回包": r"(?<!返)回包(?!含|括|装|裹)",
+    "回传": r"(?<!返)回传",
+    "加以": r"(?<![添增附])加以(?!下|上|前|后)",
+    "予以": r"(?<![授给赋赐])予以(?!下|上)",
+    "做出": r"做出了?(?!贡献)",
+    "作出": r"作出了?(?!贡献)",
+    "对标": r"对标(?![签识题志量记准注杆])",
+    "应当": r"(?<!相)应当",
+    "其实": r"其实(?![施现行践际验例效体物质在习用时况])",
+    "不得": r"不得(?!不|到|了|已|其|而)",
+    "一定要": r"(?<![不必])一定要",
+    "点选": r"(?<!节)点选(?!择|项|中)",
+    "众所周知": r"众所周知(?!的)",
+    "方面": r"(?<![这那各多双单全一两几])方面",
+    "情况": r"的情况",
+    "心智": r"心智(?!模型|负担)",
+}
+
+# 句子里出现这些词时不报对应的禁用词：规则本身允许的用法
+EXCLUDE_IF: Dict[str, str] = {
+    "等": r"例如|比如|诸如|譬如|包括|包含|如[：:]",  # 3.5 允许描述句用「例如」引出不完整的例子
+}
+
+# 这些词的提示降为【建议】：校准显示它们常有正当用法，但出现时值得看一眼
+WORD_LEVEL: Dict[str, str] = {
+    "然后": SHOULD, "接着": SHOULD, "之后再": SHOULD,
+    "落地": SHOULD, "兜底": SHOULD, "痛点": SHOULD, "心智": SHOULD,
 }
 
 # 词的检查范围。op：只在操作句；ordered：只在编号列表项；para：只在正文段落。
@@ -115,6 +151,16 @@ SCOPE: Dict[str, str] = {
     "首先": "para",
     "其次": "para",
     "最后": "para",
+    # 2.3 的情态词只在操作句里查；描述句里的「应该」多表示预期（「输出应该是……」）
+    "应该": "op",
+    "应当": "op",
+    # 1.5 的程度词只在操作句里查；描述句里「很多」「大部分」常是没法给数值的正常表述
+    "很": "op", "非常": "op", "极其": "op", "相当": "op", "十分": "op",
+    "大量": "op", "少量": "op", "大部分": "op", "多数": "op", "少数": "op",
+    "合适": "op", "适当": "op", "适量": "op", "及时": "op", "尽快": "op",
+    # 5.4 的估计词只在操作句和参数表格里查；描述句可以用「约」
+    "一些": "op_table", "多次": "op_table", "若干": "op_table",
+    "大概": "op_table", "大约": "op_table", "左右": "op_table",
 }
 
 # 禁用词对应的规则号。没有列出的默认为 1.3。
@@ -223,9 +269,38 @@ def count_chars(text: str) -> int:
     return len(CJK.findall(text)) + len(LATIN_TOKEN.findall(text))
 
 
+def join_lines(lines: List[str]) -> tuple:
+    """把一个单元的多行拼成一段。相邻两行都是西文时补一个空格。返回拼接结果和每行的起始偏移。"""
+    joined = ""
+    starts: List[int] = []
+    for line in lines:
+        if joined and re.search(r"[A-Za-z0-9]$", joined) and re.match(r"[A-Za-z0-9]", line):
+            joined += " "
+        starts.append(len(joined))
+        joined += line
+    return joined, starts
+
+
 def split_sentences(text: str) -> List[str]:
     parts = SENTENCE_SPLIT.split(text)
     return [p.strip() for p in parts if p and p.strip()]
+
+
+def unit_sentences(unit: Unit) -> List[tuple]:
+    """一个单元里的句子和各自的起始行号：(句子, 行号)。
+
+    多行先拼成一段再分句：Markdown 里的硬换行不是句子边界。
+    """
+    joined, line_starts = join_lines([strip_markup(l) for l in unit.lines])
+    out: List[tuple] = []
+    at = 0
+    for piece in SENTENCE_SPLIT.split(joined):
+        lead = len(piece) - len(piece.lstrip())
+        s = piece.strip()
+        if s:
+            out.append((s, unit.start_line + bisect.bisect_right(line_starts, at + lead) - 1))
+        at += len(piece)
+    return out
 
 
 DIRECTIVE = re.compile(r"^\s*<!--\s*stc:(off|on|skip)\s*-->\s*$")
@@ -297,6 +372,10 @@ def parse_units(lines: List[str]) -> List[Unit]:
         if not stripped:
             close()
             continue
+        if stripped.startswith("<") and stripped.endswith(">"):
+            # 整行是 HTML 标签（图片、组件示例、分隔），不是正文
+            close()
+            continue
         if stripped.startswith("#"):
             close()
             units.append(start("heading", stripped.lstrip("#").strip(), idx, raw))
@@ -340,7 +419,7 @@ def parse_units(lines: List[str]) -> List[Unit]:
 # ---------------------------------------------------------------------------
 
 class Checker:
-    def __init__(self, vocab: Optional[List[VocabEntry]], max_op: int = 25, max_desc: int = 40,
+    def __init__(self, vocab: Optional[List[VocabEntry]], max_op: int = 30, max_desc: int = 40,
                  kind: str = "auto", skip_counterexamples: bool = True) -> None:
         self.vocab = vocab or []
         self.max_op = max_op
@@ -363,7 +442,7 @@ class Checker:
                 continue
             checked.append(unit)
             findings.extend(self._check_unit(unit, path))
-        findings.extend(self._check_acronyms(checked, path))
+        # 1.6 缩写写法：脚本查不出来。大小写不同的写法几乎都来自代码、路径和链接锚点（校准精确率 0%）
         findings = self._dedupe(findings)
         findings.sort(key=lambda f: (f.line, f.rule))
         return findings
@@ -382,15 +461,13 @@ class Checker:
                 out.extend(self._check_vocab(line, unit.start_line + offset, path, op=False, unit_kind=unit.kind))
             return out
 
-        sentences: List[tuple] = []  # (sentence, line_no)
-        for offset, line in enumerate(clean_lines):
-            for s in split_sentences(line):
-                sentences.append((s, unit.start_line + offset))
+        sentences = unit_sentences(unit)  # (sentence, line_no)
 
-        # 3.2 段落句数
-        if unit.kind == "para" and len(sentences) > 6:
+        # 3.2 段落句数。只数有句末标点的句子：没有标点的行是标签或列名，不是句子
+        n_sentences = sum(1 for s, _ in sentences if s.endswith(("。", "！", "？", "；", ".", "!", "?", ";")))
+        if unit.kind == "para" and n_sentences > 6:
             out.append(Finding(path, unit.start_line, "3.2", MUST,
-                               f"一段有 {len(sentences)} 句，不超过 6 句", clean_lines[0][:30]))
+                               f"一段有 {n_sentences} 句，不超过 6 句", clean_lines[0][:30]))
 
         # 3.3 正文里串联步骤
         if unit.kind == "para":
@@ -400,19 +477,20 @@ class Checker:
                                    "正文用「首先……然后……」串联步骤，改用编号列表", clean_lines[0][:30]))
 
         for pos, (sentence, line_no) in enumerate(sentences):
-            op = self._is_operation(unit, sentence, pos)
+            op = self.is_operation(unit, sentence, pos)
             out.extend(self._check_sentence(sentence, line_no, path, op, unit.kind))
             out.extend(self._check_vocab(sentence, line_no, path, op, unit.kind))
         return out
 
-    def _is_operation(self, unit: Unit, sentence: str, pos: int) -> bool:
+    def is_operation(self, unit: Unit, sentence: str, pos: int) -> bool:
+        """这句话按操作句检查吗。auto 模式下：编号列表项里、不以系统主语或说明性词开头的句子。"""
         if self.kind == "操作":
             return True
         if self.kind == "描述":
             return False
         if unit.kind != "ordered":
             return False
-        if sentence.startswith(SYSTEM_SUBJECTS):
+        if sentence.startswith(SYSTEM_SUBJECTS) or sentence.startswith(NON_OPERATION_STARTS):
             return False
         return True
 
@@ -429,8 +507,8 @@ class Checker:
         if n > limit:
             out.append(Finding(path, line, "2.1", MUST, f"{label} {n} 字，不超过 {limit} 字", excerpt))
 
-        # 2.2 一句多事
-        connectors = re.findall(r"然后|并且|而且|接着|随后|之后", s)
+        # 2.2 一句多事。「之后」「随后」多是时间状语，不算连接词
+        connectors = re.findall(r"然后|并且|而且|接着", s)
         if not op and len(connectors) >= 2:
             out.append(Finding(path, line, "2.2", MUST, "一句里有多个动作，拆句", excerpt))
 
@@ -438,37 +516,24 @@ class Checker:
         if op and re.match(r"^(用户|使用者|管理员|开发者)(需要|可以|应该|应当|必须)", s):
             out.append(Finding(path, line, "2.3", MUST, "操作句用祈使句，去掉主语和「需要」「可以」", excerpt))
 
-        # 2.4 被动
-        passive = re.search(r"被(?!动|告|迫|称为|视为|子|窝|套|褥|面)|受到|遭到|(?<![因认成作称以改行])为[^，。]{1,10}所(?!以|有|属|在|需|谓|得|做|作|用|说|示|述|处|含|致|知|见|愿)", s)
-        if passive is None:
-            passive = re.search(r"由[^，。于来此]{1,8}(?:负责|完成|执行|生成|处理|发送|收集|读取|管理|维护|调用|触发|创建|返回|接管|承担)", s)
-        if passive:
-            level = MUST if op else SHOULD
-            out.append(Finding(path, line, "2.4", level, "被动句，改为主动句并写出执行者", excerpt))
+        # 2.4 被动。只查操作句：描述句里的被动多是「执行者未知或不重要」的合规用法，脚本分不出来（校准精确率 42%）
+        if op:
+            passive = re.search(r"被(?!动|告|迫|称为|视为|子|窝|套|褥|面)|受到|遭到|(?<![因认成作称以改行])为[^，。]{1,10}所(?!以|有|属|在|需|谓|得|做|作|用|说|示|述|处|含|致|知|见|愿)", s)
+            if passive is None:
+                passive = re.search(r"由[^，。于来此]{1,8}(?:负责|完成|执行|生成|处理|发送|收集|读取|管理|维护|调用|触发|创建|返回|接管|承担)", s)
+            if passive:
+                out.append(Finding(path, line, "2.4", MUST, "被动句，改为主动句并写出执行者", excerpt))
 
-        # 2.5 条件在后
+        # 2.5 条件在后。只查句尾的条件；括号里的内容多是补充说明，不是条件（校准精确率 34%）
         cond = r"(?:如果|若(?!干)|假如|当(?!前|时|天|地|然|中|作|成))"
-        if re.search(r"[，,]\s*" + cond + r"[^，。]{1,20}$", s) or re.search(r"[（(]\s*" + cond + r"[^）)]*[）)]", s):
-            out.append(Finding(path, line, "2.5", MUST, "条件写在动作后面，移到动作前", excerpt))
+        if re.search(r"[，,]\s*" + cond + r"[^，。]{1,20}[。！？；]?$", s):
+            out.append(Finding(path, line, "2.5", MUST if op else SHOULD, "条件写在动作后面，移到动作前", excerpt))
 
-        # 2.6 否定
+        # 2.6 否定。只查双重否定；「一句多个否定」多是独立分句各管各的（校准精确率 22%）
         if re.search(r"不得不|不无|未尝不|无不|不能不|不会不|没有[^，。]{0,6}不|不[^，。]{0,4}不是不", s):
             out.append(Finding(path, line, "2.6", MUST, "双重否定，改为肯定句", excerpt))
-        else:
-            negs = re.findall(r"不要|不能|不得|不会|没有|无法|禁止", s)
-            if len(negs) >= 2:
-                out.append(Finding(path, line, "2.6", SHOULD, "一句里有多个否定，确认否定范围", excerpt))
 
-        # 2.7 长定语（用「的」的数量近似）
-        if s.count("的") >= 4:
-            out.append(Finding(path, line, "2.7", SHOULD, "一句里有 4 个以上「的」，可能有长定语", excerpt))
-
-        # 2.8 指代
-        if "上述" in s:
-            out.append(Finding(path, line, "2.8", MUST, "「上述」指代不明，重复名词", excerpt))
-        pron = re.findall(r"(?<![尤与及极])其(?!他|它|中|次|实|余|间|后|前|内|外|上|下|名|实)|(?<!应)该(?!死)|(?<![因如由从彼至于])此(?!外)|它|这个", s)
-        if len(pron) >= 2:
-            out.append(Finding(path, line, "2.8", SHOULD, "一句里有多个指代词，确认指代对象在上一句", excerpt))
+        # 2.7 长定语、2.8 指代：脚本查不出来。「的」的数量和指代词的数量都不能代表定语长度和指代是否清楚（校准精确率 2% 和 0%）
 
         # 2.9 反问、设问、感叹
         if s.endswith(("？", "?", "！", "!")) and unit_kind != "heading":
@@ -476,29 +541,19 @@ class Checker:
         if re.search(r"难道|岂不|何必", s):
             out.append(Finding(path, line, "2.9", MUST, "反问，改为陈述句", excerpt))
 
-        # 4.3 警告混在步骤里
-        if unit_kind == "ordered" and re.search(r"注意|警告|小心", s):
-            out.append(Finding(path, line, "4.3", MUST, "警告写在步骤里，独立成段并放在步骤前", excerpt))
+        # 4.3 警告、4.5 前置条件、4.6 原因：脚本查不出来。编号列表项不一定是步骤，「注意」「因为」「（版本）」在说明性列表里都是正常用法（校准精确率 19%、12%、34%）
 
-        # 4.5 括号里的前置条件
-        if unit_kind == "ordered" and re.search(r"[（(][^）)]*(?:需要|要求|前提|不低于|版本|权限)[^）)]*[）)]", s):
-            out.append(Finding(path, line, "4.5", SHOULD, "前置条件写在括号里，单独列出", excerpt))
-
-        # 4.6 步骤里解释原因
-        if unit_kind == "ordered" and re.search(r"因为|由于|原因是", s):
-            out.append(Finding(path, line, "4.6", SHOULD, "步骤里解释原因，移到步骤前后的说明段", excerpt))
-
-        # 5.1 中文数字和「百分之」
+        # 5.1 中文数字和「百分之」。「一次」「两次」「一行」是量词习惯用法，不查；三以上和两位数才查
         units = r"(?:秒|分钟|小时|天|周|次|倍|行|列|位|字节|毫秒)"
-        if re.search(r"(?<![一十第])[一二三四五六七八九十两]+" + units + r"(?!钟|数|性)", s):
+        if re.search(r"(?<![一十第每这那上下前后头同])(?:[三四五六七八九十]|[一二两三四五六七八九]十[一二三四五六七八九]?|十[一二三四五六七八九])" + units + r"(?!钟|数|性)", s):
             out.append(Finding(path, line, "5.1", MUST, "用阿拉伯数字", excerpt))
         if "百分之" in s:
             out.append(Finding(path, line, "5.1", MUST, "「百分之」改为 %", excerpt))
-        if re.search(r"\d(?:MB|GB|KB|TB|ms|px)\b", s):
+        if re.search(r"\d(?:MB|GB|KB|TB|ms)\b", s):
             out.append(Finding(path, line, "5.1", SHOULD, "数字与单位之间空一格", excerpt))
 
-        # 5.3 相对时间
-        if re.search(r"明天|后天|昨天|前天|下周|上周|下个月|上个月|近期|稍后|过几天|不久", s):
+        # 5.3 相对时间。只查相对于写作时间的日期词；「稍后」「近期」在技术描述里多指程序时序，不查
+        if re.search(r"明天|后天|昨天|前天|下周|上周|下个月|上个月|明年|去年|近期将|不久的将来|即将发布|过几天", s):
             out.append(Finding(path, line, "5.3", MUST, "相对时间，改为绝对日期或时长", excerpt))
 
         # 5.4 操作句里的估计词
@@ -520,8 +575,11 @@ class Checker:
     def _check_vocab(self, s: str, line: int, path: str, op: bool, unit_kind: str) -> List[Finding]:
         out: List[Finding] = []
         for entry, pattern in self._compiled:
-            scope = SCOPE.get(entry.words[0])
+            word = entry.words[0]
+            scope = SCOPE.get(word)
             if scope == "op" and not op:
+                continue
+            if scope == "op_table" and not (op or unit_kind == "table"):
                 continue
             if scope == "ordered" and unit_kind != "ordered":
                 continue
@@ -530,32 +588,13 @@ class Checker:
             m = pattern.search(s)
             if not m:
                 continue
-            word = entry.words[0]
+            if word in EXCLUDE_IF and re.search(EXCLUDE_IF[word], s):
+                continue
             if entry.kind == "banned":
                 msg = f"禁用词「{word}」，改用：{entry.replace}"
             else:
                 msg = f"「{word}」改用「{entry.replace}」（{entry.note}）"
-            out.append(Finding(path, line, entry.rule, MUST, msg, s[:40]))
-        return out
-
-    # -- 文件级 ------------------------------------------------------------
-
-    def _check_acronyms(self, units: List[Unit], path: str) -> List[Finding]:
-        seen: Dict[str, Dict[str, int]] = {}
-        for unit in units:
-            for offset, raw in enumerate(unit.lines):
-                idx = unit.start_line + offset
-                clean = re.sub(r"`[^`]*`", " ", raw)
-                clean = re.sub(r"https?://\S+", " ", clean)
-                for tok in re.findall(r"\b[A-Za-z]{2,}\b", clean):
-                    variants = seen.setdefault(tok.lower(), {})
-                    variants.setdefault(tok, idx)
-        out: List[Finding] = []
-        for key, variants in seen.items():
-            if len(variants) > 1 and any(v.isupper() for v in variants):
-                forms = "、".join(sorted(variants))
-                first = min(variants.values())
-                out.append(Finding(path, first, "1.6", SHOULD, f"缩写写法不一致：{forms}", key))
+            out.append(Finding(path, line, entry.rule, WORD_LEVEL.get(word, MUST), msg, s[:40]))
         return out
 
     @staticmethod
@@ -584,7 +623,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="句子类型。auto：编号列表项按操作句，其他按描述句")
     parser.add_argument("--vocab", default=DEFAULT_VOCAB, help="词表路径")
     parser.add_argument("--no-vocab", action="store_true", help="不检查词表")
-    parser.add_argument("--max-op", type=int, default=25, help="操作句字数上限，默认 25")
+    parser.add_argument("--max-op", type=int, default=30, help="操作句字数上限，默认 30")
     parser.add_argument("--max-desc", type=int, default=40, help="描述句字数上限，默认 40")
     parser.add_argument("--quiet", action="store_true", help="只输出汇总")
     parser.add_argument("--check-counterexamples", action="store_true",

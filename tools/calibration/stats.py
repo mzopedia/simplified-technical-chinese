@@ -60,8 +60,8 @@ def md_files(root: str) -> Iterator[str]:
             yield os.path.join(dirpath, name)
 
 
-def sentences_of(text: str) -> Iterator[dict]:
-    """按检查脚本同样的切分方式产出句子。"""
+def sentences_of(text: str, checker: check.Checker) -> Iterator[dict]:
+    """按检查脚本同样的切分和句型判断产出句子。"""
     units = check.parse_units(text.splitlines())
     in_counterexample = False
     for unit in units:
@@ -69,21 +69,18 @@ def sentences_of(text: str) -> Iterator[dict]:
             in_counterexample = check.is_counterexample(unit.lines[0])
         if in_counterexample or unit.skip or unit.kind in ("heading", "table"):
             continue
-        for offset, raw in enumerate(unit.lines):
-            line = check.strip_markup(raw)
-            for pos, s in enumerate(check.split_sentences(line)):
-                op = unit.kind == "ordered" and not s.startswith(check.SYSTEM_SUBJECTS)
-                n = check.count_chars(s)
-                if n == 0:
-                    continue
-                yield {
-                    "line": unit.start_line + offset,
-                    "unit": unit.kind,
-                    "kind": "操作" if op else "描述",
-                    "chars": n,
-                    "de": s.count("的"),
-                    "text": s[:80],
-                }
+        for pos, (s, line_no) in enumerate(check.unit_sentences(unit)):
+            n = check.count_chars(s)
+            if n == 0:
+                continue
+            yield {
+                "line": line_no,
+                "unit": unit.kind,
+                "kind": "操作" if checker.is_operation(unit, s, pos) else "描述",
+                "chars": n,
+                "de": s.count("的"),
+                "text": s[:80],
+            }
 
 
 def percentiles(values: List[int], points=(50, 75, 90, 95, 99)) -> Dict[str, float]:
@@ -141,7 +138,7 @@ def main(argv: List[str]) -> int:
                     continue
                 rel = os.path.relpath(path, root)
                 stat["files"] += 1
-                for s in sentences_of(text):
+                for s in sentences_of(text, checker):
                     stat["sentences"] += 1
                     stat["chars"] += s["chars"]
                     lengths[corpus][s["kind"]].append(s["chars"])
@@ -178,10 +175,11 @@ def main(argv: List[str]) -> int:
         "sentence_length": {
             c: {k: percentiles(v) for k, v in kinds.items()} for c, kinds in lengths.items()
         },
+        "limits": {"操作": checker.max_op, "描述": checker.max_desc},
         "over_limit": {
             c: {
-                "操作>25": round(sum(x > 25 for x in kinds["操作"]) / len(kinds["操作"]) * 100, 1) if kinds["操作"] else None,
-                "描述>40": round(sum(x > 40 for x in kinds["描述"]) / len(kinds["描述"]) * 100, 1) if kinds["描述"] else None,
+                "操作": round(sum(x > checker.max_op for x in kinds["操作"]) / len(kinds["操作"]) * 100, 1) if kinds["操作"] else None,
+                "描述": round(sum(x > checker.max_desc for x in kinds["描述"]) / len(kinds["描述"]) * 100, 1) if kinds["描述"] else None,
             } for c, kinds in lengths.items()
         },
         "de_per_sentence": {c: percentiles(v) for c, v in de_counts.items()},
@@ -202,14 +200,14 @@ def main(argv: List[str]) -> int:
     for w in words_sorted[:60]:
         c = word_counts[w]
         md.append(f"| {w} | {word_rule[w]} | {sum(c.values())} | {sum(c.values()) / total_chars * 10000:.2f} |")
-    md += ["", "## 句长分布（字）", "", "| 语料库 | 句型 | n | 均值 | p50 | p75 | p90 | p95 | p99 | 最长 | 超过草案上限 |",
+    md += ["", "## 句长分布（字）", "", f"| 语料库 | 句型 | n | 均值 | p50 | p75 | p90 | p95 | p99 | 最长 | 超过上限（操作 {checker.max_op} / 描述 {checker.max_desc}） |",
            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for c in corpora + ["__all__"]:
         for k in ("操作", "描述"):
             p = stats["sentence_length"].get(c, {}).get(k) or {}
             if not p:
                 continue
-            over = stats["over_limit"][c]["操作>25" if k == "操作" else "描述>40"]
+            over = stats["over_limit"][c][k]
             md.append(f"| {c} | {k} | {p['n']} | {p['mean']} | {p['p50']} | {p['p75']} | {p['p90']} | {p['p95']} | {p['p99']} | {p['max']} | {over}% |")
     with open(os.path.join(out_dir, "stats.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(md) + "\n")

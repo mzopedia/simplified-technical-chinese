@@ -134,14 +134,15 @@ def main(argv: List[str]) -> int:
         info = stats["words"][w]
         md.append(f"| {w} | {info['rule']} | {info['total']} | {info['total'] / total_chars * 10000:.2f} | {sum(c.values())} | {c['真']} | {c['误']} | {fmt_p(p)} | {advice(p, n)} |")
 
-    md += ["", "## 句长分布（字）", "", "| 语料库 | 句型 | n | 均值 | p50 | p90 | p95 | p99 | 超过草案上限 |",
+    limits = stats.get("limits", {"操作": "?", "描述": "?"})
+    md += ["", "## 句长分布（字）", "", f"| 语料库 | 句型 | n | 均值 | p50 | p90 | p95 | p99 | 超过上限（操作 {limits['操作']} / 描述 {limits['描述']}） |",
            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for c in list(stats["corpora"]) + ["__all__"]:
         for k in ("操作", "描述"):
             p = stats["sentence_length"].get(c, {}).get(k) or {}
             if not p:
                 continue
-            over = stats["over_limit"][c]["操作>25" if k == "操作" else "描述>40"]
+            over = stats["over_limit"][c][k]
             md.append(f"| {'合计' if c == '__all__' else c} | {k} | {p['n']} | {p['mean']} | {p['p50']} | {p['p90']} | {p['p95']} | {p['p99']} | {over}% |")
 
     n_lab = sum(sum(c[v] for v in ("真", "误", "不确定")) for c in by_rule.values())

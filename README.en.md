@@ -51,7 +51,7 @@ The rules that do most of the work:
 
 - One concept, one word, for the whole document.
 - No 进行 / 加以 + verb (the Chinese equivalent of "perform an installation"). Use the verb.
-- Instructions: at most 25 units. Descriptions: at most 40. A unit is one Chinese character, or one Latin word or number.
+- Instructions: at most 30 units. Descriptions: at most 40. A unit is one Chinese character, or one Latin word or number.
 - Instructions are imperatives that start with the verb. No 请 ("please"), no 您 ("you"), no "the user needs to".
 - Conditions before actions. Warnings in their own paragraph, before the step they apply to.
 - No 以上 / 以下 after a number (Chinese "and above / and below" is ambiguous about the endpoint). Write 大于 / 不小于 ("greater than / not less than").
@@ -75,7 +75,7 @@ git clone --depth 1 https://github.com/mzopedia/simplified-technical-chinese.git
 Without the skill, paste this into the system prompt. It is the "normal mode", roughly Karpathy's "80% of the way to STE":
 
 ```text
-用简明技术中文回答。规则：一句只说一件事，操作句不超过 25 字，描述句不超过 40 字；操作步骤用编号列表，动词开头，不写「请」「您」；用主动句；条件写在动作前面；一个概念全文只用一个词；不用「进行」「相关」「等」「以上」「尽快」「大概」；不用反问和感叹；数字后不用「以上」「以下」，写「大于」「不小于」。
+用简明技术中文回答。规则：一句只说一件事，操作句不超过 30 字，描述句不超过 40 字；操作步骤用编号列表，动词开头，不写「请」「您」；用主动句；条件写在动作前面；一个概念全文只用一个词；不用「进行」「相关」「等」「以上」「尽快」「大概」；不用反问和感叹；数字后不用「以上」「以下」，写「大于」「不小于」。
 ```
 
 For the full rule set, give the model [规范.md](规范.md).
@@ -87,23 +87,24 @@ python3 tools/check.py file.md [more files]
     --strict            exit 1 when there is any must-level finding
     --json              JSON output
     --kind 操作|描述     force one sentence type; use 描述 for chat answers
-    --max-op 25         unit limit for instructions
+    --max-op 30         unit limit for instructions
     --max-desc 40       unit limit for descriptions
 ```
 
-It reliably catches: banned words, rejected synonyms, sentence and paragraph length, passive markers, double negation, trailing conditions, open-ended lists (…等), relative time, Chinese numerals, "reduced by N times", and warnings or reasons written inside a step.
+It reliably catches: banned words, rejected synonyms, sentence and paragraph length, passive voice and modal / degree / estimate words inside instructions, trailing conditions, double negation, open-ended lists (…等), relative dates, Chinese numerals, "reduced by N times", questions and exclamations.
 
-It cannot judge facts, term choice, logical order, or the meaning restrictions that need context. It treats numbered list items as instructions and uses the count of 的 as a proxy for long modifiers. Every finding needs a human.
+It cannot judge facts, term choice, logical order, meaning restrictions, modifier length, pronoun clarity, acronym consistency, or warnings and reasons inside steps. Those checks scored too low on real documents during calibration and now live only in the spec text, for humans. See [docs/校准报告.md](docs/校准报告.md). It treats numbered list items as instructions. Every finding needs a human.
 
 It skips code, inline code, HTML comments, text inside 「」 (UI labels), YAML front matter, lines that start with 不批准 ("rejected:"), and anything between `<!-- stc:off -->` and `<!-- stc:on -->`.
 
 ## Status
 
-Draft 0.1. Known limits:
+Version 0.2. The rules, the thresholds and the auto-checked vocabulary were calibrated on 3.5 million characters of real Chinese technical documentation (TiDB, Kubernetes, MDN, Vue, Vite, Ant Design, the Rust book and the ES6 tutorial, 2856 files): every rule the checker enforces was sampled and judged on real text, and the ones that were wrong more often than right were removed from the checker. Warnings on good documents dropped from 190 to about 60 per 10,000 characters. The length limits sit at the 90th percentile of good documents (90% of instructions are under 33 units, 90% of descriptions under 41). Details: [docs/校准报告.md](docs/校准报告.md).
 
-- The length limits (25 / 40 units, 15-unit modifiers) are first guesses. No reading experiment has calibrated them.
+Known limits:
+
 - The vocabulary has about 170 entries and covers general technical writing only.
-- No controlled reading-comprehension study yet.
+- No controlled reading-comprehension study yet. The calibration measured false positives, not reading speed or error rates.
 - The checker is syntactic only.
 
 The spec, the Chinese README and SKILL.md pass the checker with 0 must-level findings, and CI re-checks them on every push. This English README is not checked: the checker is for Chinese text.
