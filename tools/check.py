@@ -262,9 +262,21 @@ def parse_units(lines: List[str]) -> List[Unit]:
                 start_at = i + 1
                 break
 
+    in_comment = False
     for idx, raw in enumerate(lines[start_at:], start=start_at + 1):
-        stripped = raw.strip()
+        if in_comment:
+            if "-->" not in raw:
+                continue
+            in_comment = False
+            raw = raw.split("-->", 1)[1]
         d = DIRECTIVE.match(raw)
+        if d is None and "<!--" in raw:
+            # HTML 注释不是读者看到的内容。整行或行内的注释去掉；跨行注释到 --> 为止都跳过
+            raw = re.sub(r"<!--.*?-->", "", raw)
+            if "<!--" in raw:
+                raw = raw.split("<!--", 1)[0]
+                in_comment = True
+        stripped = raw.strip()
         if d:
             close()
             if d.group(1) == "off":

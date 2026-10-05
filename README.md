@@ -129,6 +129,7 @@ python3 tools/check.py 文件.md [更多文件]
 
 - 「」里的内容，按界面文字处理
 - 代码块和行内代码
+- HTML 注释，`stc:` 指令除外
 - 文件开头的 YAML front matter
 - 以「不批准：」「反例」「改写前」开头的行
 - `<!-- stc:off -->` 和 `<!-- stc:on -->` 之间的内容；`<!-- stc:skip -->` 跳过它后面的一段

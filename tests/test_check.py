@@ -72,6 +72,19 @@ class TestVocab(unittest.TestCase):
         text = "---\ndescription: 请进行安装\n---\n\n<!-- stc:off -->\n请进行安装。\n<!-- stc:on -->\n\n<!-- stc:skip -->\n请进行安装。\n\n安装。\n"
         self.assertEqual(self.checker.check_text(text), [])
 
+    def test_html_comments_are_skipped(self):
+        text = "\n".join([
+            "<!--",
+            "这里的内容进行测试，不应该被检查。",
+            "-->",
+            "中文句子。<!-- 行内注释里的进行 -->",
+            "<!-- 多行",
+            "注释开始",
+            "--> 注释后的进行修改。",
+        ])
+        f = self.checker.check_text(text)
+        self.assertEqual([(x.rule, x.line) for x in f], [("1.4", 7)])
+
     def test_counterexample_line_is_skipped(self):
         f = self.checker.check_text("- 不批准：对配置文件进行修改。")
         self.assertEqual(f, [])

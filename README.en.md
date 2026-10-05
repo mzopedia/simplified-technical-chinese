@@ -95,7 +95,7 @@ It reliably catches: banned words, rejected synonyms, sentence and paragraph len
 
 It cannot judge facts, term choice, logical order, or the meaning restrictions that need context. It treats numbered list items as instructions and uses the count of 的 as a proxy for long modifiers. Every finding needs a human.
 
-It skips code, inline code, text inside 「」 (UI labels), YAML front matter, lines that start with 不批准 ("rejected:"), and anything between `<!-- stc:off -->` and `<!-- stc:on -->`.
+It skips code, inline code, HTML comments, text inside 「」 (UI labels), YAML front matter, lines that start with 不批准 ("rejected:"), and anything between `<!-- stc:off -->` and `<!-- stc:on -->`.
 
 ## Status
 
