@@ -144,6 +144,17 @@ class TestSentenceRules(unittest.TestCase):
         f = self.checker.check_text("配置文件会被服务读取。")
         self.assertTrue(any(x.rule == "2.4" and x.level == check.SHOULD for x in f))
 
+    def test_passive_markers_inside_other_words_are_not_passive(self):
+        # 来自 answer-me-with-html 维护者在 1000 篇中文文档上的实测误报。
+        for text in ["把被子叠好。", "因为缓存所在目录不可写，任务失败。", "成为开发者所需的全部工具。", "系统所示的路径。"]:
+            f = self.checker.check_text(text)
+            self.assertNotIn("2.4", rules(f), text)
+
+    def test_imperative_rule_skips_questions_and_nouns(self):
+        for text in ["1. 需不需要重启，看日志。", "1. 用户表里新增一列。"]:
+            f = self.checker.check_text(text)
+            self.assertNotIn("2.3", rules(f), text)
+
     def test_reduce_by_times(self):
         f = self.checker.check_text("延迟降低了 3 倍。")
         self.assertIn("5.5", rules(f))
