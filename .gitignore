@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
+
+# 校准语料和中间结果，不入库
+.data/

@@ -102,7 +102,7 @@ It skips code, inline code, text inside 「」 (UI labels), YAML front matter, l
 Draft 0.1. Known limits:
 
 - The length limits (25 / 40 units, 15-unit modifiers) are first guesses. No reading experiment has calibrated them.
-- The vocabulary has about 150 entries and covers general technical writing only.
+- The vocabulary has about 170 entries and covers general technical writing only.
 - No controlled reading-comprehension study yet.
 - The checker is syntactic only.
 

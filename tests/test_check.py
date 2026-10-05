@@ -89,6 +89,18 @@ class TestVocab(unittest.TestCase):
         msgs = [x.message for x in f if x.rule == "1.1"]
         self.assertTrue(any("点击" in m for m in msgs))
 
+    def test_jargon_is_rule_1_7(self):
+        f = self.checker.check_text("按新打法对标行业方案，把握用户痛点，理清底层逻辑。")
+        hits = [x for x in f if x.rule == "1.7"]
+        self.assertEqual(len(hits), 4)
+        self.assertTrue(all(x.level == check.MUST for x in hits))
+
+    def test_words_with_technical_meaning_are_not_banned(self):
+        # 势能、飞轮、护城河 标为不自动检查；脚手架、收敛 只在词表第三部分限定意义
+        f = self.checker.check_text("弹簧的势能转化为动能。用脚手架生成项目。迭代 20 次后误差收敛。")
+        self.assertNotIn("1.7", rules(f))
+        self.assertNotIn("1.3", rules(f))
+
     def test_zhuxiao_account_allowed(self):
         f = self.checker.check_text("注销账号后数据不可恢复。")
         self.assertFalse(any("注销" in x.message for x in f))
