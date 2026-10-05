@@ -133,15 +133,19 @@ class TestVocab(unittest.TestCase):
             self.assertEqual(f, [], text)
 
     def test_degree_and_estimate_words_only_in_operations(self):
-        self.assertNotIn("1.5", rules(self.checker.check_text("Rust 提供了很多类型。大部分用户不用 beta 版。")))
-        self.assertIn("1.5", rules(self.checker.check_text("1. 等待很长时间。")))
+        self.assertNotIn("1.5", rules(self.checker.check_text("大部分用户不用 beta 版。尽快升级。")))
+        self.assertIn("1.5", rules(self.checker.check_text("1. 尽快重启服务。")))
+        # 很、非常、合适这类词连操作句里也多是正常用法，不自动检查
+        self.assertNotIn("1.5", rules(self.checker.check_text("1. 等待很长时间。")))
         self.assertNotIn("5.4", rules(self.checker.check_text("这会有大约 16 KB 的基本打包大小。")))
-        self.assertIn("5.4", rules(self.checker.check_text("1. 重试多次。")))
+        self.assertIn("5.4", rules(self.checker.check_text("1. 重试若干次。")))
         self.assertIn("5.4", rules(self.checker.check_text("| 超时 | 大约 30 秒 |")))
 
     def test_modal_words_only_in_operations(self):
         self.assertNotIn("2.3", rules(self.checker.check_text("输出结果应该是这样。")))
-        self.assertIn("2.3", rules(self.checker.check_text("1. 你应该先备份。")))
+        self.assertIn("2.3", rules(self.checker.check_text("1. 您需要先备份。")))
+        # 你、应该在编号列表里多是说明不是步骤，不自动检查
+        self.assertNotIn("2.3", rules(self.checker.check_text("1. 你应该先备份。")))
 
     def test_open_list_with_example_marker_is_allowed(self):
         self.assertNotIn("3.5", rules(self.checker.check_text("例如 Deployment、Service 等对象。")))
@@ -149,7 +153,9 @@ class TestVocab(unittest.TestCase):
 
     def test_qingkuang_only_after_de(self):
         self.assertNotIn("1.3", rules(self.checker.check_text("默认情况下，服务监听 8080 端口。")))
-        self.assertIn("1.3", rules(self.checker.check_text("出现错误的情况下重试。")))
+        # 「在……的情况下」是固定搭配，不查；「的情况」单独出现才查
+        self.assertNotIn("1.3", rules(self.checker.check_text("出现错误的情况下重试。")))
+        self.assertIn("1.3", rules(self.checker.check_text("用 TiUP 部署的情况，见下文。")))
 
 
 class TestSentenceRules(unittest.TestCase):
@@ -173,8 +179,9 @@ class TestSentenceRules(unittest.TestCase):
         self.assertNotIn("2.1", rules(f))
 
     def test_double_negation(self):
+        # 校准后降为建议：「不得不」这类固定搭配模型多判为正常用法
         f = self.checker.check_text("不得不重启服务。")
-        self.assertTrue(any(x.rule == "2.6" and x.level == check.MUST for x in f))
+        self.assertTrue(any(x.rule == "2.6" and x.level == check.SHOULD for x in f))
 
     def test_question_mark(self):
         f = self.checker.check_text("为什么服务起不来？")
@@ -190,9 +197,11 @@ class TestSentenceRules(unittest.TestCase):
         # 括号里的内容多是补充说明，校准后不再当条件
         self.assertNotIn("2.5", rules(self.checker.check_text("重启服务（如果修改了端口号）。")))
 
-    def test_passive_in_operation_is_must(self):
+    def test_passive_in_operation_is_should(self):
         f = self.checker.check_text("1. 配置文件会被服务读取。")
-        self.assertTrue(any(x.rule == "2.4" and x.level == check.MUST for x in f))
+        self.assertTrue(any(x.rule == "2.4" and x.level == check.SHOULD for x in f))
+        # 「被 X 的 Y」是定语，不是被动谓语
+        self.assertNotIn("2.4", rules(self.checker.check_text("1. 查看被拒绝的请求。")))
 
     def test_passive_in_description_is_not_checked(self):
         # 描述句里的被动多是执行者未知或不重要的合规用法，脚本分不出来，校准后只查操作句
@@ -229,9 +238,10 @@ class TestSentenceRules(unittest.TestCase):
         f = self.checker.check_text(text)
         self.assertIn("3.2", rules(f))
 
-    def test_first_then_in_prose(self):
+    def test_first_then_in_prose_is_not_checked(self):
+        # 3.3 从脚本移除：正文里的「首先……然后……」多数在描述顺序，不是在写步骤（校准精确率 30%）
         f = self.checker.check_text("首先停止服务，然后备份数据，最后运行脚本。")
-        self.assertIn("3.3", rules(f))
+        self.assertNotIn("3.3", rules(f))
 
     def test_numerals(self):
         # 「一次」「两次」「一行」是量词习惯用法；三以上和两位数才查

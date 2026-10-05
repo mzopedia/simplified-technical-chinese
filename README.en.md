@@ -29,13 +29,13 @@ After, from [examples/after.md](examples/after.md):
 What the checker says about the "before" sentence:
 
 ```text
-examples/before.md:11: [1.1][必须] 「登陆」改用「登录」          # wrong character for "log in"
-examples/before.md:11: [2.1][必须] 操作句 56 字，不超过 25 字      # instruction is 56 units, limit 25
-examples/before.md:11: [4.1][必须] 禁用词「然后」，改用：拆成编号步骤  # "then": split into numbered steps
+examples/before.md:11: [1.3][必须] 禁用词「登陆」，改用：登录        # wrong character for "log in"
+examples/before.md:11: [2.1][必须] 操作句 56 字，不超过 30 字      # instruction is 56 units, limit 30
+examples/before.md:11: [4.1][建议] 禁用词「然后」，改用：拆成编号步骤  # "then": split into numbered steps (advisory)
 examples/before.md:11: [4.1][必须] 禁用词「并且」，改用：拆句       # "and also": split the sentence
 ```
 
-The whole "before" document has 48 must-fix findings. The rewrite has 0.
+The whole "before" document has 34 must-fix findings. The rewrite has 0.
 
 ## What is in the box
 
@@ -99,7 +99,7 @@ It skips code, inline code, HTML comments, text inside 「」 (UI labels), YAML 
 
 ## Status
 
-Version 0.2. The rules, the thresholds and the auto-checked vocabulary were calibrated on 3.5 million characters of real Chinese technical documentation (TiDB, Kubernetes, MDN, Vue, Vite, Ant Design, the Rust book and the ES6 tutorial, 2856 files): every rule the checker enforces was sampled and judged on real text, and the ones that were wrong more often than right were removed from the checker. Warnings on good documents dropped from 190 to about 60 per 10,000 characters. The length limits sit at the 90th percentile of good documents (90% of instructions are under 33 units, 90% of descriptions under 41). Details: [docs/校准报告.md](docs/校准报告.md).
+Version 0.2. The rules, the thresholds and the auto-checked vocabulary were calibrated on 3.5 million characters of real Chinese technical documentation (TiDB, Kubernetes, MDN, Vue, Vite, Ant Design, the Rust book and the ES6 tutorial, 2856 files): every rule the checker enforces was sampled and judged on real text, and the ones that were wrong more often than right were removed from the checker. Warnings on good documents dropped from 194 to 88 per 10,000 characters; more than half of what remains is sentence length. Excluding length, from 151 to 40. The length limits sit at the 90th percentile of good documents (90% of instructions are under 33 units, 90% of descriptions under 41). Details: [docs/校准报告.md](docs/校准报告.md).
 
 Known limits:
 

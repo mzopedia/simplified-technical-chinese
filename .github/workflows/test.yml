@@ -18,4 +18,4 @@ jobs:
       - name: Unit tests
         run: python -m unittest discover -s tests -v
       - name: The project's own documents must pass the checker
-        run: python tools/check.py --strict README.md SKILL.md 规范.md examples/after.md
+        run: python tools/check.py --strict README.md SKILL.md 规范.md examples/after.md docs/校准报告.md tools/calibration/README.md
