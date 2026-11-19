@@ -60,6 +60,21 @@ class TestVocab(unittest.TestCase):
         f = self.checker.check_text("保存文件、关闭窗口，等待 3 秒。")
         self.assertNotIn("3.5", rules(f))
 
+    def test_deng_inside_term_after_list_marker(self):
+        # 「幂等」「初等」这类词里的「等」不是列举结尾，跟在「、」「和」后面也不报。
+        for text in (
+            "请求头里带上订单号、幂等键。",
+            "请求头里带上订单号和幂等键。",
+            "接口要保证可重试以及幂等。",
+            "课程包括线性代数和初等数论。",
+        ):
+            with self.subTest(text=text):
+                self.assertNotIn("3.5", rules(self.checker.check_text(text)))
+
+    def test_deng_enumeration_still_flagged_near_term(self):
+        f = self.checker.check_text("支持订单号、幂等键等字段。")
+        self.assertIn("3.5", rules(f))
+
     def test_quoted_text_is_skipped(self):
         f = self.checker.check_text("不写「请」「您」「进行」。")
         self.assertEqual([x for x in f if x.level == check.MUST], [])
